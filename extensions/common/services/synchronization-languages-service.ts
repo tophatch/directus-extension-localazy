@@ -38,6 +38,9 @@ export class SynchronizationLanguagesService {
   }
 
   async resolveImportLanguages(settings: Settings, localazyProject: Project): Promise<DirectusLocalazyLanguage[]> {
+    // Initialize custom language mappings from settings
+    DirectusLocalazyAdapter.initializeMappings(settings.language_mappings || '[]');
+
     const { language_code_field, language_collection, import_source_language } = settings;
     const directusLanguages = await this.fetchDirectusLanguages(language_collection, language_code_field);
     const localazyLanguages = localazyProject.languages || [];
@@ -94,6 +97,9 @@ export class SynchronizationLanguagesService {
   }
 
   async resolveExportLanguages(settings: Settings) {
+    // Initialize custom language mappings from settings
+    DirectusLocalazyAdapter.initializeMappings(settings.language_mappings || '[]');
+
     const {
       language_code_field, language_collection, source_language, upload_existing_translations,
     } = settings;

@@ -65,6 +65,9 @@ export class ExportToLocalazyService {
       return;
     }
 
+    // Initialize custom language mappings from settings
+    DirectusLocalazyAdapter.initializeMappings(settings.language_mappings || '[]');
+
     try {
       const { add, execute } = useEnhancedAsyncQueue();
 
