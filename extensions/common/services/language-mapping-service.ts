@@ -2,13 +2,33 @@ import { LanguageMappings } from '../models/language-mapping';
 
 /**
  * Service for handling custom language code mappings between Directus and Localazy.
- * Provides bidirectional transformation with fallback to default behavior.
+ *
+ * Directus and Localazy use different conventions for language codes:
+ * - Directus typically uses BCP 47 format (e.g., `zh-Hans`, `pt-BR`)
+ * - Localazy uses locale format with special characters (e.g., `zh-CN#Hans`, `pt_BR`)
+ *
+ * This service allows defining explicit mappings for codes that cannot be converted
+ * through simple character replacement, with fallback to default transformation
+ * when no custom mapping exists.
+ *
+ * @example
+ * ```typescript
+ * const service = new LanguageMappingService('[{"directusCode":"zh-Hans","localazyCode":"zh-CN#Hans"}]');
+ * service.transformDirectusToLocalazy('zh-Hans'); // Returns 'zh-CN#Hans'
+ * service.transformDirectusToLocalazy('en-US'); // Returns 'en_US' (default fallback)
+ * ```
  */
 export class LanguageMappingService {
   private directusToLocalazy: Map<string, string> = new Map();
 
   private localazyToDirectus: Map<string, string> = new Map();
 
+  /**
+   * Creates a new LanguageMappingService instance.
+   *
+   * @param mappingsJson - JSON string containing an array of language mappings.
+   *                       Format: `[{directusCode: string, localazyCode: string, description?: string}]`
+   */
   constructor(mappingsJson: string) {
     this.loadMappings(mappingsJson);
   }
@@ -105,7 +125,7 @@ export class LanguageMappingService {
       mappings.forEach((mapping, index) => {
         const mappingNum = index + 1;
 
-        if (!mapping.directusCode || typeof mapping.directusCode !== 'string') {
+        if (mapping.directusCode === undefined || mapping.directusCode === null || typeof mapping.directusCode !== 'string') {
           errors.push(`Mapping ${mappingNum}: Missing or invalid Directus code`);
         } else if (mapping.directusCode.trim() === '') {
           errors.push(`Mapping ${mappingNum}: Directus code cannot be empty`);
@@ -115,7 +135,7 @@ export class LanguageMappingService {
           directusCodes.add(mapping.directusCode);
         }
 
-        if (!mapping.localazyCode || typeof mapping.localazyCode !== 'string') {
+        if (mapping.localazyCode === undefined || mapping.localazyCode === null || typeof mapping.localazyCode !== 'string') {
           errors.push(`Mapping ${mappingNum}: Missing or invalid Localazy code`);
         } else if (mapping.localazyCode.trim() === '') {
           errors.push(`Mapping ${mappingNum}: Localazy code cannot be empty`);

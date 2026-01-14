@@ -19,17 +19,21 @@ type CreateContentFromCollectionItems = {
 };
 
 type CreateValueForCollectionItem = {
-  translationItem: Record<string, any>,
-  fieldName: string,
-  collection: string,
-  languageRelationField: string,
-  item: Item,
-  settings: Settings,
+  translationItem: Record<string, unknown>;
+  fieldName: string;
+  collection: string;
+  languageRelationField: string;
+  item: Item;
+  settings: Settings;
   collectionFields: Field[];
   isSourceLanguageItem: boolean;
 };
 
 export class ContentFromCollections extends ContentForLocalazyBase {
+  /**
+   * Creates translatable content from collection items.
+   * Optimized with pre-computed enabled fields set for O(1) lookups.
+   */
   static createContentFromCollectionItems(data: CreateContentFromCollectionItems) {
     const {
       collection, items, enabledFields, translatableFieldAttributes, settings,
@@ -37,52 +41,67 @@ export class ContentFromCollections extends ContentForLocalazyBase {
     } = data;
     const translatableContent: TranslatableContent = { sourceLanguage: {}, otherLanguages: {} };
 
-    items.forEach((item) => {
-      translatableFieldAttributes.forEach((relationField) => {
-        const translations: Array<Record<string, any>> = item[relationField.field];
-        translations.forEach((translationItem) => {
-          Object.keys(translationItem)
-            .filter((fieldName) => FieldsUtilsService.isEnabledField(fieldName, collection, enabledFields))
-            .forEach((fieldName) => {
-              const itemLanguage = translationItem[relationField.fieldLanguageCodeField];
-              if (itemLanguage) {
-                const isSourceLanguageItem = settings.source_language === itemLanguage;
-                if (!isSourceLanguageItem && !translatableContent.otherLanguages[itemLanguage]) {
-                  translatableContent.otherLanguages[itemLanguage] = {};
-                }
+    // Pre-compute enabled fields set for O(1) lookups instead of O(n) filter calls
+    const enabledFieldsForCollection = new Set(
+      enabledFields
+        .filter((ef) => ef.collection === collection)
+        .map((ef) => ef.field),
+    );
 
-                const sourceObject = isSourceLanguageItem
-                  ? translatableContent.sourceLanguage
-                  : translatableContent.otherLanguages[itemLanguage];
+    // Cache source language for faster comparison
+    const { source_language } = settings;
 
-                merge(sourceObject, this.createValueForCollectionItem({
-                  translationItem,
-                  fieldName,
-                  collection,
-                  languageRelationField: relationField.field,
-                  item,
-                  settings,
-                  collectionFields,
-                  isSourceLanguageItem,
-                }));
-              }
-            });
-        });
-      });
-    });
+    for (const item of items) {
+      for (const relationField of translatableFieldAttributes) {
+        const translations: Array<Record<string, unknown>> = item[relationField.field];
+        if (!Array.isArray(translations)) continue;
+
+        for (const translationItem of translations) {
+          const itemLanguage = translationItem[relationField.fieldLanguageCodeField] as string;
+          if (!itemLanguage) continue;
+
+          const isSourceLanguageItem = source_language === itemLanguage;
+
+          // Initialize other language object once
+          if (!isSourceLanguageItem && !translatableContent.otherLanguages[itemLanguage]) {
+            translatableContent.otherLanguages[itemLanguage] = {};
+          }
+
+          const sourceObject = isSourceLanguageItem
+            ? translatableContent.sourceLanguage
+            : translatableContent.otherLanguages[itemLanguage];
+
+          // Process enabled fields directly with O(1) lookup
+          for (const fieldName of Object.keys(translationItem)) {
+            if (!enabledFieldsForCollection.has(fieldName)) continue;
+
+            merge(sourceObject, this.createValueForCollectionItem({
+              translationItem: translationItem as Record<string, unknown>,
+              fieldName,
+              collection,
+              languageRelationField: relationField.field,
+              item,
+              settings,
+              collectionFields,
+              isSourceLanguageItem,
+            }));
+          }
+        }
+      }
+    }
 
     return translatableContent;
   }
 
   private static buildMetaObjectForCollectionItem(
     data: Pick<CreateValueForCollectionItem, 'collection' | 'languageRelationField' | 'fieldName' | 'item' | 'collectionFields'>,
-  ) {
+  ): Record<string, unknown> {
     const {
       collection, languageRelationField, fieldName, item, collectionFields,
     } = data;
     const fieldDetail = collectionFields.find((f) => f.field === fieldName);
 
-    const meta: Record<string, any> = {
+    const meta: Record<string, unknown> = {
       add: {
         directus: {
           collection,
