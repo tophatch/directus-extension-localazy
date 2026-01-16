@@ -86,7 +86,12 @@ const validationErrors = ref<string[]>([]);
 
 watch(() => props.modelValue, (value) => {
   try {
-    parsedMappings.value = JSON.parse(value || '[]');
+    // Handle both string (from code) and array (from Directus JSON field)
+    if (Array.isArray(value)) {
+      parsedMappings.value = value;
+    } else {
+      parsedMappings.value = JSON.parse(value || '[]');
+    }
   } catch (e) {
     parsedMappings.value = [];
   }

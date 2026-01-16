@@ -13,9 +13,11 @@ type CreateContentFromCollectionItems = {
   translatableFieldAttributes: {
     field: string;
     fieldLanguageCodeField: string;
+    languagesCollectionCodeField: string;
   }[]
   settings: Settings;
   collectionFields: Field[];
+  languages: string[];
 };
 
 type CreateValueForCollectionItem = {
@@ -37,16 +39,20 @@ export class ContentFromCollections extends ContentForLocalazyBase {
   static createContentFromCollectionItems(data: CreateContentFromCollectionItems) {
     const {
       collection, items, enabledFields, translatableFieldAttributes, settings,
-      collectionFields,
+      collectionFields, languages,
     } = data;
     const translatableContent: TranslatableContent = { sourceLanguage: {}, otherLanguages: {} };
 
     // Pre-compute enabled fields set for O(1) lookups instead of O(n) filter calls
+    // EnabledField has { collection: string, fields: string[] } structure
     const enabledFieldsForCollection = new Set(
       enabledFields
         .filter((ef) => ef.collection === collection)
-        .map((ef) => ef.field),
+        .flatMap((ef) => ef.fields),
     );
+
+    // Pre-compute languages set for O(1) lookups
+    const requestedLanguages = new Set(languages);
 
     // Cache source language for faster comparison
     const { source_language } = settings;
@@ -57,8 +63,22 @@ export class ContentFromCollections extends ContentForLocalazyBase {
         if (!Array.isArray(translations)) continue;
 
         for (const translationItem of translations) {
-          const itemLanguage = translationItem[relationField.fieldLanguageCodeField] as string;
-          if (!itemLanguage) continue;
+          // Handle both expanded object and direct value for the language code
+          // If expanded: { languages_code: { code: 'en-US', name: 'English' } }
+          // If direct: { languages_code: 'en-US' }
+          const languageFieldValue = translationItem[relationField.fieldLanguageCodeField];
+          let itemLanguage: string | undefined;
+
+          if (typeof languageFieldValue === 'string') {
+            // Direct value (language code is the FK value itself)
+            itemLanguage = languageFieldValue;
+          } else if (languageFieldValue && typeof languageFieldValue === 'object') {
+            // Expanded object - get the code from the language record
+            itemLanguage = (languageFieldValue as Record<string, unknown>)[relationField.languagesCollectionCodeField] as string;
+          }
+
+          // Skip if no language or not in requested languages
+          if (!itemLanguage || !requestedLanguages.has(itemLanguage)) continue;
 
           const isSourceLanguageItem = source_language === itemLanguage;
 

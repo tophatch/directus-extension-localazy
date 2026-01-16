@@ -26,16 +26,19 @@ export class LanguageMappingService {
   /**
    * Creates a new LanguageMappingService instance.
    *
-   * @param mappingsJson - JSON string containing an array of language mappings.
-   *                       Format: `[{directusCode: string, localazyCode: string, description?: string}]`
+   * @param mappingsInput - JSON string or array containing language mappings.
+   *                        Format: `[{directusCode: string, localazyCode: string, description?: string}]`
    */
-  constructor(mappingsJson: string) {
-    this.loadMappings(mappingsJson);
+  constructor(mappingsInput: string | LanguageMappings) {
+    this.loadMappings(mappingsInput);
   }
 
-  private loadMappings(json: string): void {
+  private loadMappings(input: string | LanguageMappings): void {
     try {
-      const mappings: LanguageMappings = JSON.parse(json || '[]');
+      // Handle both string (from code) and array (from Directus JSON field)
+      const mappings: LanguageMappings = Array.isArray(input)
+        ? input
+        : JSON.parse(input || '[]');
       mappings.forEach((mapping) => {
         if (mapping.directusCode && mapping.localazyCode) {
           this.directusToLocalazy.set(mapping.directusCode, mapping.localazyCode);

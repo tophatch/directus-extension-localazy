@@ -1,5 +1,6 @@
 import { getLocalazyLanguages } from '@localazy/languages';
 import { LanguageMappingService } from './language-mapping-service';
+import { LanguageMappings } from '../models/language-mapping';
 
 /**
  * BCP 47 language tag validation pattern.
@@ -23,8 +24,8 @@ export class DirectusLocalazyAdapter {
    * Initialize the adapter with custom language mappings from settings.
    * Should be called before any transformation operations.
    */
-  static initializeMappings(mappingsJson: string): void {
-    this.mappingService = new LanguageMappingService(mappingsJson);
+  static initializeMappings(mappingsInput: string | LanguageMappings): void {
+    this.mappingService = new LanguageMappingService(mappingsInput);
   }
 
   /**

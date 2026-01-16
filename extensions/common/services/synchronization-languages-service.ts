@@ -29,12 +29,15 @@ export class SynchronizationLanguagesService {
 
   async createLanguages(settings: Settings, localazyLanguages: Language[]) {
     const { language_code_field, language_collection } = settings;
-    localazyLanguages.forEach(async (language) => {
+    // Use for...of to properly await each creation
+    for (const language of localazyLanguages) {
+      // Transform Localazy code to Directus code using custom mappings
+      const directusCode = DirectusLocalazyAdapter.transformLocalazyToDirectusPreferedFormLanguage(language.code);
       await this.directusApi.createDirectusItem(language_collection, {
-        [language_code_field]: language.code,
+        [language_code_field]: directusCode,
         name: language.name,
       });
-    });
+    }
   }
 
   async resolveImportLanguages(settings: Settings, localazyProject: Project): Promise<DirectusLocalazyLanguage[]> {
