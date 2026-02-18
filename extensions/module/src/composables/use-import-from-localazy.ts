@@ -16,6 +16,13 @@ type ImportContentFromLocalazy = {
   localazyData: LocalazyData;
 };
 
+type ImportFromProjectOptions = {
+  projectId: string;
+  languages: DirectusLocalazyLanguage[];
+  enabledFields: EnabledField[];
+  localazyData: LocalazyData;
+};
+
 type ImportContentFromLocalazySuccessReturn = {
   success: true;
   content: ReturnType<typeof ContentFromLocalazyService.parseLocalazyContent>;
@@ -32,7 +39,8 @@ export const useImportFromLocalazy = () => {
 
   const { addProgressMessage } = useProgressTrackerStore();
   const { addLocalazyError } = useErrorsStore();
-  const { localazyProject } = storeToRefs(useLocalazyStore());
+  const localazyStore = useLocalazyStore();
+  const { localazyProject } = storeToRefs(localazyStore);
 
   const importContentFromLocalazy = async (data: ImportContentFromLocalazy): Promise<ImportContentFromLocalazyReturn> => {
     if (!localazyProject.value) {
@@ -67,8 +75,43 @@ export const useImportFromLocalazy = () => {
     }
   };
 
+  const importFromProject = async (data: ImportFromProjectOptions): Promise<ImportContentFromLocalazyReturn> => {
+    const project = localazyStore.getProject(data.projectId);
+    if (!project) {
+      return { success: false };
+    }
+    try {
+      return importFromLocalazyService.importContentFromLocalazy({
+        languages: data.languages,
+        enabledFields: data.enabledFields,
+        localazyData: data.localazyData,
+        localazyProject: project,
+        progressCallbacks: {
+          nothingToImport: () => {
+            addProgressMessage({
+              id: ProgressTrackerId.NOTHING_TO_IMPORT,
+              type: 'error',
+              message: `Nothing to import from project "${project.name}". Please export content first.`,
+            });
+          },
+          couldNotFetchContent: (language) => {
+            addProgressMessage({
+              id: ProgressTrackerId.FETCHING_CONTENT_FROM_LOCALAZY,
+              type: 'error',
+              message: `(${language}) Couldn't fetch content from "${project.name}"`,
+            });
+          },
+        },
+      });
+    } catch (e: any) {
+      addLocalazyError(e, { type: 'import', userId: data.localazyData.user_id || '', orgId: project.orgId });
+      return { success: false };
+    }
+  };
+
   return {
     loading,
     importContentFromLocalazy,
+    importFromProject,
   };
 };

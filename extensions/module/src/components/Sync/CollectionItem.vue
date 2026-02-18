@@ -25,13 +25,32 @@
         :model-value="selections.map((selection) => selection.collection)"
         @update:model-value="onUpdateCollectionSelection"
       >
-        <span>
-          <v-icon
-            :color="collection.color || 'var(--primary)'"
-            class="collection-icon"
-            :name="collection.icon"
-          />
-          <span class="collection-name">{{ collection.name }}</span>
+        <span class="collection-header">
+          <span>
+            <v-icon
+              :color="collection.color || 'var(--primary)'"
+              class="collection-icon"
+              :name="collection.icon"
+            />
+            <span class="collection-name">{{ collection.name }}</span>
+          </span>
+
+          <span class="collection-controls" v-if="isTranslatableCollection && isSelected" @click.stop>
+            <v-select
+              v-if="projectConfigs.length > 1"
+              class="project-select"
+              :items="projectSelectItems"
+              :model-value="selectedProjectId"
+              @update:model-value="onUpdateProjectForCollection($event)"
+              placeholder="Default project"
+              small
+            />
+            <item-filter-modal
+              :collection="collection.collection"
+              :selected-item-ids="selectedItemIds"
+              @update:item-ids="onUpdateItemsForCollection($event)"
+            />
+          </span>
         </span>
       </v-checkbox>
 
@@ -72,6 +91,7 @@
         :selections="selections"
         :show-untranslatable-field="showUntranslatableField"
         :showUntranslatableCollections="showUntranslatableCollections"
+        :project-configs="projectConfigs"
         @update:selections="$emit('update:selections', $event)"
       />
     </div>
@@ -84,7 +104,9 @@ import { AppCollection, Field } from '@directus/types';
 import { isEqualWith } from 'lodash';
 import { useGetFieldsForTranslationRelation } from '../../composables/use-get-fields-for-translation-relation';
 import { EnabledField } from '../../../../common/models/collections-data/content-transfer-setup';
+import { LocalazyProjectConfig } from '../../../../common/models/collections-data/localazy-project-config';
 import { FieldsUtilsService } from '../../../../common/utilities/fields-utils-service';
+import ItemFilterModal from './ItemFilterModal.vue';
 
 const props = defineProps({
   collection: {
@@ -111,6 +133,10 @@ const props = defineProps({
     type: Boolean,
     required: true,
   },
+  projectConfigs: {
+    type: Array as PropType<LocalazyProjectConfig[]>,
+    default: () => [],
+  },
 });
 
 const emits = defineEmits(['update:selections']);
@@ -135,7 +161,16 @@ const localSelections = computed({
         return acc;
       }, new Map<string, string[]>());
     const updatedSelections = Object.entries(Object.fromEntries(collectionFieldsMap))
-      .map(([collection, fields]) => ({ collection, fields }));
+      .map(([collection, fields]) => {
+        // Preserve projectId and itemIds from previous selection
+        const existing = props.selections.find((s) => s.collection === collection);
+        return {
+          collection,
+          fields,
+          ...(existing?.projectId ? { projectId: existing.projectId } : {}),
+          ...(existing?.itemIds ? { itemIds: existing.itemIds } : {}),
+        };
+      });
 
     emits('update:selections', updatedSelections);
   },
@@ -149,6 +184,19 @@ const otherSelections = computed(() => props.selections
 
 const isTranslatableCollection = computed(() => props.translatableCollections
   .some((col) => col.collection === props.collection.collection));
+
+const isSelected = computed(() => !!selectionsForCollection.value);
+
+const selectedProjectId = computed(() => selectionsForCollection.value?.projectId || '');
+const selectedItemIds = computed(() => selectionsForCollection.value?.itemIds || []);
+
+const projectSelectItems = computed(() => [
+  { text: 'Default project', value: '' },
+  ...props.projectConfigs.map((config) => ({
+    text: config.project_name + (config.is_default ? ' (Default)' : ''),
+    value: config.project_id,
+  })),
+]);
 
 const isTranlatableField = FieldsUtilsService.isTranslatableField;
 
@@ -194,9 +242,37 @@ function onUpdateCollectionSelection() {
       {
         collection: props.collection.collection,
         fields: fields.map((field) => field.field),
+        ...(selectionsForCollection.value?.projectId ? { projectId: selectionsForCollection.value.projectId } : {}),
+        ...(selectionsForCollection.value?.itemIds ? { itemIds: selectionsForCollection.value.itemIds } : {}),
       },
     ]);
   }
+}
+
+function onUpdateProjectForCollection(projectId: string) {
+  const updated = props.selections.map((s) => {
+    if (s.collection === props.collection.collection) {
+      return {
+        ...s,
+        ...(projectId ? { projectId } : { projectId: undefined }),
+      };
+    }
+    return s;
+  });
+  emits('update:selections', updated);
+}
+
+function onUpdateItemsForCollection(itemIds: string[]) {
+  const updated = props.selections.map((s) => {
+    if (s.collection === props.collection.collection) {
+      return {
+        ...s,
+        ...(itemIds.length > 0 ? { itemIds } : { itemIds: undefined }),
+      };
+    }
+    return s;
+  });
+  emits('update:selections', updated);
 }
 
 function onGroupClick() {
@@ -245,5 +321,23 @@ function onGroupClick() {
  }
 }
 
+.collection-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.collection-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.project-select {
+  min-width: 150px;
+  max-width: 200px;
+}
+
 </style>
-../../../common/utilities/fields-utils-service

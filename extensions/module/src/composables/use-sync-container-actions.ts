@@ -35,9 +35,14 @@ type OnSaveSettingsParams = {
 type OnExportParams = {
   contentTransferSetupCollection: AppCollection | null;
   contentTransferSetup: ContentTransferSetupDatabase | null;
+  targetProjectId?: string;
 };
 
-type OnImportParams = OnExportParams;
+type OnImportParams = {
+  contentTransferSetupCollection: AppCollection | null;
+  contentTransferSetup: ContentTransferSetupDatabase | null;
+  targetProjectId?: string;
+};
 
 export const useSyncContainerActions = (data: UseSyncContainerActions) => {
   const { configuration, enabledFields, synchronizeTranslationStrings } = data;
@@ -54,7 +59,7 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
 
   const { addProgressMessage, resetProgressTracker } = useProgressTrackerStore();
   const localazyStore = useLocalazyStore();
-  const { localazyUser, localazyProject } = storeToRefs(localazyStore);
+  const { localazyUser, localazyProject, defaultProjectId } = storeToRefs(localazyStore);
 
   const loading = ref(false);
   const showProgress = ref(false);
@@ -96,26 +101,54 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
     });
     const token = computed(() => configuration.value.localazy_data.access_token);
     onSaveSettings(payload);
+
     try {
       const exportLanguages = await resolveExportLanguages(configuration.value.settings);
-      const [translationStrings, collectionsContent] = await Promise.all([
-        fetchTranslationStrings({
-          languages: exportLanguages,
-          settings: configuration.value.settings,
-          synchronizeTranslationStrings: synchronizeTranslationStrings.value,
-        }),
-        fetchContentFromTranslatableCollections({
-          languages: exportLanguages,
-          translatableCollections: translatableCollections.value,
-          enabledFields: enabledFields.value,
-          settings: configuration.value.settings,
-        }),
-      ]);
+      const resolvedDefaultProjectId = defaultProjectId.value;
 
-      await useExportToLocalazy(token).exportContentToLocalazy({
-        content: merge(collectionsContent, translationStrings),
-        settings: configuration.value.settings,
-      });
+      // If a specific project is targeted, filter fields for that project
+      const fieldsToExport = payload.targetProjectId
+        ? enabledFields.value.filter((f) => (f.projectId || resolvedDefaultProjectId) === payload.targetProjectId)
+        : enabledFields.value;
+
+      // Group fields by project
+      const projectGroups = EnabledFieldsService.groupByProject(fieldsToExport, resolvedDefaultProjectId);
+
+      // Only include translation strings for the default project export
+      const shouldExportTranslationStrings = !payload.targetProjectId
+        || payload.targetProjectId === resolvedDefaultProjectId;
+
+      for (const [pid, projectFields] of projectGroups) {
+        const projectTranslatableCollections = EnabledFieldsService.buildTranslatableCollections(projectFields);
+
+        // Map to the format expected by fetchContentFromTranslatableCollections
+        const collectionsForFetch = projectTranslatableCollections.map((tc) => {
+          const existing = translatableCollections.value.find((c) => c.collection === tc.collection);
+          return existing ? { ...existing, itemIds: tc.itemIds } : { collection: tc.collection, itemIds: tc.itemIds };
+        });
+
+        const [translationStrings, collectionsContent] = await Promise.all([
+          (shouldExportTranslationStrings && pid === resolvedDefaultProjectId)
+            ? fetchTranslationStrings({
+              languages: exportLanguages,
+              settings: configuration.value.settings,
+              synchronizeTranslationStrings: synchronizeTranslationStrings.value,
+            })
+            : Promise.resolve({ sourceLanguage: {}, otherLanguages: {} }),
+          fetchContentFromTranslatableCollections({
+            languages: exportLanguages,
+            translatableCollections: collectionsForFetch,
+            enabledFields: projectFields,
+            settings: configuration.value.settings,
+          }),
+        ]);
+
+        await useExportToLocalazy(token).exportContentToLocalazy({
+          content: merge(collectionsContent, translationStrings),
+          settings: configuration.value.settings,
+          targetProjectId: pid,
+        });
+      }
     } finally {
       loading.value = false;
     }
@@ -129,17 +162,45 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
       message: 'Retrieving target languages',
     });
     onSaveSettings(payload);
+
     try {
       const importLanguages = await resolveImportLanguages(configuration.value.settings);
-      const result = await useImportFromLocalazy().importContentFromLocalazy(
-        {
+      const resolvedDefaultProjectId = defaultProjectId.value;
+
+      if (payload.targetProjectId) {
+        // Import from a specific project
+        const projectFields = enabledFields.value.filter(
+          (f) => (f.projectId || resolvedDefaultProjectId) === payload.targetProjectId,
+        );
+        const result = await useImportFromLocalazy().importFromProject({
+          projectId: payload.targetProjectId,
           languages: importLanguages,
+          enabledFields: projectFields,
           localazyData: configuration.value.localazy_data,
-          enabledFields: enabledFields.value,
-        },
-      );
-      if (result.success) {
-        await upsertFromLocalazyContent(result.content, configuration.value.settings);
+        });
+        if (result.success) {
+          await upsertFromLocalazyContent(result.content, configuration.value.settings);
+          addProgressMessage({
+            id: ProgressTrackerId.IMPORT_FINISHED,
+            message: 'Import finished',
+          });
+        }
+      } else {
+        // Import from all configured projects
+        const projectGroups = EnabledFieldsService.groupByProject(enabledFields.value, resolvedDefaultProjectId);
+
+        for (const [pid, projectFields] of projectGroups) {
+          const result = await useImportFromLocalazy().importFromProject({
+            projectId: pid,
+            languages: importLanguages,
+            enabledFields: projectFields,
+            localazyData: configuration.value.localazy_data,
+          });
+          if (result.success) {
+            await upsertFromLocalazyContent(result.content, configuration.value.settings);
+          }
+        }
+
         addProgressMessage({
           id: ProgressTrackerId.IMPORT_FINISHED,
           message: 'Import finished',

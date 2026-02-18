@@ -6,8 +6,9 @@ import { SynchronizationLanguagesService } from '../../../../common/services/syn
 import { TranslatableContent } from '../../../../common/models/translatable-content';
 import { ExportToLocalazyService } from '../export-to-localazy-service';
 import { importFromLocalazyService } from '../import-from-localazy-service';
-import { ContentTransferSetupDatabase } from '../../../../common/models/collections-data/content-transfer-setup';
+import { ContentTransferSetupDatabase, EnabledField } from '../../../../common/models/collections-data/content-transfer-setup';
 import { EnabledFieldsService } from '../../../../common/utilities/enabled-fields-service';
+import { LocalazyProjectConfig } from '../../../../common/models/collections-data/localazy-project-config';
 import { useEnhancedAsyncQueue } from '../../../../module/src/composables/use-async-queue';
 import { LocalazyApiThrottleService } from '../../../../common/services/localazy-api-throttle-service';
 import { DirectusLocalazyLanguage } from '../../../../common/models/directus-localazy-language';
@@ -250,5 +251,52 @@ export abstract class BaseContentSynchronizationService {
       localazyData,
       settings,
     });
+  }
+
+  protected async resolveProjectConfigs(
+    ItemsService: DirectusItemsServiceConstructor,
+    schema: SchemaOverview,
+  ): Promise<LocalazyProjectConfig[]> {
+    try {
+      // Check if the localazy_projects collection exists in the schema
+      if (!schema?.collections?.localazy_projects) {
+        return [];
+      }
+      const projectsService = new ItemsService('localazy_projects', { schema });
+      const configs: LocalazyProjectConfig[] = await projectsService.readByQuery({
+        fields: '*',
+        limit: -1,
+      });
+      return configs || [];
+    } catch (e) {
+      // Graceful fallback: collection doesn't exist yet
+      return [];
+    }
+  }
+
+  protected resolveProjectForCollection(
+    collection: string,
+    enabledFields: EnabledField[],
+    projectConfigs: LocalazyProjectConfig[],
+  ): string | null {
+    // Find the enabled field entry for this collection
+    const field = enabledFields.find((f) => f.collection === collection);
+    if (field?.projectId) {
+      return field.projectId;
+    }
+    // Default to the default project
+    const defaultConfig = projectConfigs.find((c) => c.is_default);
+    return defaultConfig?.project_id || null;
+  }
+
+  protected async loadProjectById(token: string, projectId: string): Promise<Project | null> {
+    if (!token || !projectId) return null;
+    try {
+      const projects = await LocalazyApiThrottleService.listProjects(token, { organization: true, languages: true });
+      return projects.find((p) => p.id === projectId) || projects[0] || null;
+    } catch (e) {
+      trackLocalazyError(e instanceof Error ? e : new Error(String(e)), 'loadProjectById');
+      return null;
+    }
   }
 }

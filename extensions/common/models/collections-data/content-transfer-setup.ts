@@ -1,6 +1,8 @@
 export type EnabledField = {
   collection: string;
   fields: string[];
+  projectId?: string;   // Localazy project ID; undefined = default project
+  itemIds?: string[];    // Specific item IDs; undefined = all items
 };
 
 export type ContentTransferSetup = {

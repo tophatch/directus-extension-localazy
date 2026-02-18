@@ -36,6 +36,13 @@
         :localazy-data-collection="localazyDataCollection"
       />
 
+      <project-manager
+        v-if="localazyProjectsCollection"
+        :localazy-data="localazyData"
+        :projects-collection-name="localazyProjectsCollection.collection"
+        @update:project-configs="onProjectConfigsUpdated"
+      />
+
     </div>
 
   </private-view>
@@ -52,12 +59,14 @@ import { storeToRefs } from 'pinia';
 import { useStores } from '@directus/extensions-sdk';
 import { Settings } from '../../common/models/collections-data/settings';
 import ProjectSetupForm from './components/ProjectSetup/ProjectSetupForm.vue';
+import ProjectManager from './components/Sync/ProjectManager.vue';
 import Navigation from './components/Navigation.vue';
 import { useLocalazyStore } from './stores/localazy-store';
 import { defaultConfiguration } from './data/default-configuration';
 import ErrorsNotice from './components/ErrorsNotice.vue';
 import { useDirectusApi } from './composables/use-directus-api';
 import { useHydrate } from './composables/use-hydrate';
+import { LocalazyProjectConfig } from '../../common/models/collections-data/localazy-project-config';
 
 type Configuration = {
   settings: Settings;
@@ -75,7 +84,9 @@ const {
   hydrateLocalazyData,
 } = localazyStore;
 const {
-  hydrateDirectusData, localazyData, settings, settingsCollection, localazyDataCollection, hydratedDirectusData,
+  hydrateDirectusData, localazyData, settings, settingsCollection,
+  localazyDataCollection, hydratedDirectusData, localazyProjectsCollection,
+  projectConfigs,
 } = useHydrate();
 const { hydrating, hydrated } = storeToRefs(localazyStore);
 
@@ -89,7 +100,7 @@ watch(
 );
 
 hydrateDirectusData().then(() => {
-  hydrateLocalazyData({ localazyData });
+  hydrateLocalazyData({ localazyData, projectConfigs });
 });
 
 const changesExist = computed(() => !isEqual(settingsEdits.value, configuration.value.settings));
@@ -105,6 +116,10 @@ async function onSaveChanges() {
     await hydrateDirectusData({ force: true });
   }
   loading.value = false;
+}
+
+function onProjectConfigsUpdated(configs: LocalazyProjectConfig[]) {
+  // Project configs are managed by ProjectManager and stored in localazy-store
 }
 
 </script>

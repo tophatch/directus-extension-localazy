@@ -17,6 +17,13 @@ import { ExportToLocalazyCommonService } from '../../../common/services/export-t
 type ExportContentToLocalazy = {
   content: TranslatableContent;
   settings: Settings;
+  targetProjectId?: string;
+};
+
+type ExportToMultipleProjectsEntry = {
+  projectId: string;
+  content: TranslatableContent;
+  settings: Settings;
 };
 
 export const useExportToLocalazy = (token: Ref<string>) => {
@@ -24,11 +31,12 @@ export const useExportToLocalazy = (token: Ref<string>) => {
   const { execute, add } = useEnhancedAsyncQueue();
   const { addProgressMessage, upsertProgressMessage } = useProgressTrackerStore();
   const { addLocalazyError } = useErrorsStore();
+  const localazyStore = useLocalazyStore();
   const {
     localazyProject, projectId, localazyUser,
-  } = storeToRefs(useLocalazyStore());
+  } = storeToRefs(localazyStore);
 
-  const createExportPromisesForLanguage = (content: KeyValueEntry, language: string) => {
+  const createExportPromisesForLanguage = (content: KeyValueEntry, language: string, resolvedProjectId: string) => {
     const contentChunks = ContentFromCollections.splitContentIntoChunks(content);
 
     const importPromises = contentChunks.map(
@@ -39,7 +47,7 @@ export const useExportToLocalazy = (token: Ref<string>) => {
         });
 
         return ExportToLocalazyCommonService
-          .exportToLocalazy(token.value, projectId.value, chunk, language)
+          .exportToLocalazy(token.value, resolvedProjectId, chunk, language)
           .then(() => {
             upsertProgressMessage(ProgressTrackerId.IMPORTED_CONTENT_CHUNK, {
               message: `(${language}) Export ${index + 1} / ${contentChunks.length} content chunks`,
@@ -54,27 +62,32 @@ export const useExportToLocalazy = (token: Ref<string>) => {
   };
 
   const exportContentToLocalazy = async (data: ExportContentToLocalazy) => {
-    const { content, settings } = data;
+    const { content, settings, targetProjectId } = data;
     loading.value = true;
 
+    // Resolve which project to export to
+    const resolvedProject = targetProjectId
+      ? localazyStore.getProject(targetProjectId)
+      : localazyProject.value;
+    const resolvedProjectId = resolvedProject?.id || projectId.value;
+
     const directusSourceLanguageAsLocalazyLanguage = ExportToLocalazyCommonService.getDirectusSourceLanguageAsLocalazyLanguage({
-      localazySourceLanguage: localazyProject.value?.sourceLanguage || 0,
+      localazySourceLanguage: resolvedProject?.sourceLanguage || 0,
       directusSourceLanguage: settings.source_language,
     });
 
     const nothingToExport = isEmpty(content.sourceLanguage) && Object.values(content.otherLanguages).every(isEmpty);
 
-    add(createExportPromisesForLanguage(content.sourceLanguage, directusSourceLanguageAsLocalazyLanguage));
+    add(createExportPromisesForLanguage(content.sourceLanguage, directusSourceLanguageAsLocalazyLanguage, resolvedProjectId));
     Object.entries(content.otherLanguages).forEach(([language, languageContent]) => {
-      // Transform Directus language code to Localazy format using custom mappings if available
       const localazyLanguage = DirectusLocalazyAdapter.transformDirectusToLocalazyLanguage(language);
-      add(createExportPromisesForLanguage(languageContent, localazyLanguage));
+      add(createExportPromisesForLanguage(languageContent, localazyLanguage, resolvedProjectId));
     });
 
-    if (localazyProject.value) {
+    if (resolvedProject) {
       addProgressMessage({
         id: ProgressTrackerId.LOADED_LOCALAZY_PROJECT,
-        message: `Loaded project ${localazyProject.value.name}`,
+        message: `Loaded project ${resolvedProject.name}`,
       });
 
       await execute({ delayBetween: 150 });
@@ -86,8 +99,8 @@ export const useExportToLocalazy = (token: Ref<string>) => {
       });
       AnalyticsService.trackUploadToLocalazy(ExportToLocalazyCommonService.getPayloadForUploadAnalytics({
         userId: localazyUser.value.id,
-        orgId: localazyProject.value.orgId || '',
-        localazyProject: localazyProject.value.name || '',
+        orgId: resolvedProject.orgId || '',
+        localazyProject: resolvedProject.name || '',
         settings,
         languages: Object.keys(content.otherLanguages),
       }));
@@ -100,8 +113,19 @@ export const useExportToLocalazy = (token: Ref<string>) => {
     }
   };
 
+  const exportToMultipleProjects = async (entries: ExportToMultipleProjectsEntry[]) => {
+    for (const entry of entries) {
+      await exportContentToLocalazy({
+        content: entry.content,
+        settings: entry.settings,
+        targetProjectId: entry.projectId,
+      });
+    }
+  };
+
   return {
     exportContentToLocalazy,
+    exportToMultipleProjects,
     loading,
   };
 };

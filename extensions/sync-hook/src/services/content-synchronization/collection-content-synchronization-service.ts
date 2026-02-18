@@ -53,7 +53,15 @@ class CollectionContentSynchronizationService extends BaseContentSynchronization
       const { settings, contentTransferSetup } = await this.resolveLocalazySettings(ItemsService, schema);
       const { localazyData } = await this.resolveLocalazyData(ItemsService, schema);
       if (settings && contentTransferSetup && localazyData) {
-        const localazyProject = await this.loadProject(localazyData.access_token);
+        // Resolve which project this collection belongs to
+        const projectConfigs = await this.resolveProjectConfigs(ItemsService, schema);
+        const enabledFields = EnabledFieldsService.parseFromDatabase(contentTransferSetup.enabled_fields);
+        const targetProjectId = this.resolveProjectForCollection(collection, enabledFields, projectConfigs);
+
+        // Load the correct project (specific or fallback to default/first)
+        const localazyProject = targetProjectId
+          ? await this.loadProjectById(localazyData.access_token, targetProjectId)
+          : await this.loadProject(localazyData.access_token);
 
         if (!localazyProject) {
           logger.error('Localazy: Could not load project');
@@ -70,7 +78,7 @@ class CollectionContentSynchronizationService extends BaseContentSynchronization
           contentTransferSetup,
         });
         if (!isEmpty(translatableContent.sourceLanguage)) {
-          logger.info(`Localazy: Exporting ${collection} content for keys ${data.keys.join(', ')}`);
+          logger.info(`Localazy: Exporting ${collection} content for keys ${data.keys.join(', ')} to project ${localazyProject.name}`);
           await this.exportToLocalazy({
             schema,
             settings,

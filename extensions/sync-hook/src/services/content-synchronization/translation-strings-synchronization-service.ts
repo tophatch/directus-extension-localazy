@@ -41,7 +41,13 @@ class TranslationStringsSynchronizationService extends BaseContentSynchronizatio
       const { settings, contentTransferSetup } = await this.resolveLocalazySettings(ItemsService, schema);
       const { localazyData } = await this.resolveLocalazyData(ItemsService, schema);
       if (settings && contentTransferSetup && localazyData) {
-        const localazyProject = await this.loadProject(localazyData.access_token);
+        // Translation strings always export to the default project
+        const projectConfigs = await this.resolveProjectConfigs(ItemsService, schema);
+        const defaultConfig = projectConfigs.find((c) => c.is_default);
+        const localazyProject = defaultConfig
+          ? await this.loadProjectById(localazyData.access_token, defaultConfig.project_id)
+          : await this.loadProject(localazyData.access_token);
+
         if (!localazyProject) {
           logger.error('Localazy: Could not load project');
           return;

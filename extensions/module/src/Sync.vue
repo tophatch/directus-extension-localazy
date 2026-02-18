@@ -20,17 +20,25 @@
 
     <template #actions>
       <sync-action-buttons
-        @upload="onExport({ contentTransferSetupCollection, contentTransferSetup })"
-        @download="onImport({ contentTransferSetupCollection, contentTransferSetup })"
+        @upload="onExport({ contentTransferSetupCollection, contentTransferSetup, targetProjectId: activeProjectTab })"
+        @download="onImport({ contentTransferSetupCollection, contentTransferSetup, targetProjectId: activeProjectTab })"
         @save-settings="onSaveSettings({ contentTransferSetupCollection, contentTransferSetup, notify: true })"
         :has-changes="hasChanges"
         :disable-sync="!someTranslatableFieldsChecked && !synchronizeTranslationStrings"
+        :active-project-name="activeProjectName"
       />
     </template>
 
     <div class="panel">
       <config-notice class="notice" :has-incomplete-configuration="hasIncompleteConfiguration" />
       <errors-notice class="notice" :localazy-data="localazyData" />
+
+      <project-tabs
+        v-if="projectConfigs.length > 1"
+        :project-configs="projectConfigs"
+        :active-project-id="activeProjectTab"
+        @update:active-project-id="activeProjectTab = $event"
+      />
 
       <sync-option-buttons
         v-model:show-untranslatable-field="showUntranslatableField"
@@ -45,7 +53,7 @@
 
         <div class="collection-list">
           <collection-item
-            v-for="col in iteratedCollections"
+            v-for="col in filteredIteratedCollections"
             :key="col.collection"
             :collection="col"
             :translatable-collections="translatableCollections"
@@ -53,13 +61,14 @@
             :selections="enabledFields"
             :showUntranslatableField="showUntranslatableField"
             :show-untranslatable-collections="showUntranslatableCollections"
+            :project-configs="projectConfigs"
             @update:selections="enabledFields = $event"
           />
         </div>
 
         <translation-strings-content
           :class="{
-            'translation-strings-separator': iteratedCollections.length > 0,
+            'translation-strings-separator': filteredIteratedCollections.length > 0,
           }"
           v-model:shouldSynchronize="synchronizeTranslationStrings"
         />
@@ -81,6 +90,7 @@ import { computed, ref } from 'vue';
 import { storeToRefs } from 'pinia';
 import Navigation from './components/Navigation.vue';
 import CollectionItem from './components/Sync/CollectionItem.vue';
+import ProjectTabs from './components/Sync/ProjectTabs.vue';
 import { useCollectionsOrganizer } from './composables/use-collections-organizer';
 import { useGetFieldsForTranslationRelation } from './composables/use-get-fields-for-translation-relation';
 import SyncActionButtons from './components/Sync/SyncActionButtons.vue';
@@ -103,6 +113,8 @@ const { progressTracker } = storeToRefs(useProgressTrackerStore());
 
 const showUntranslatableField = ref(false);
 const showUntranslatableCollections = ref(false);
+const activeProjectTab = ref<string | undefined>(undefined);
+
 const { configuration, enabledFields, synchronizeTranslationStrings } = useInitSyncContainer();
 const {
   onSaveSettings, onExport, onImport, onFinishAction, showProgress, loading, hasChanges,
@@ -116,15 +128,43 @@ const localazyStore = useLocalazyStore();
 const {
   hydrateDirectusData, localazyData, hasIncompleteConfiguration,
   hydratedDirectusData, contentTransferSetupCollection, contentTransferSetup,
+  projectConfigs,
 } = useHydrate();
 
 hydrateDirectusData().then(() => {
-  localazyStore.hydrateLocalazyData({ localazyData });
+  localazyStore.hydrateLocalazyData({ localazyData, projectConfigs });
 });
 
 const iteratedCollections = computed(() => (showUntranslatableCollections.value
   ? rootCollections.value
   : translatableRootCollections.value));
+
+// Filter collections by active project tab
+const filteredIteratedCollections = computed(() => {
+  if (!activeProjectTab.value) return iteratedCollections.value;
+
+  const defaultPid = localazyStore.defaultProjectId;
+
+  // Collections assigned to the active project tab
+  const assignedCollections = new Set(
+    enabledFields.value
+      .filter((f) => (f.projectId || defaultPid) === activeProjectTab.value)
+      .map((f) => f.collection),
+  );
+
+  // If no collections assigned to this project yet, show all (so user can assign)
+  if (assignedCollections.size === 0) return iteratedCollections.value;
+
+  return iteratedCollections.value.filter(
+    (col) => assignedCollections.has(col.collection),
+  );
+});
+
+const activeProjectName = computed(() => {
+  if (!activeProjectTab.value) return undefined;
+  const config = projectConfigs.value.find((c) => c.project_id === activeProjectTab.value);
+  return config?.project_name;
+});
 
 const allTranslatableFields = computed(() => translatableCollections
   .value.map((c) => [

@@ -2,10 +2,10 @@
   <div>
     <div class="sync-action-buttons">
       <v-button @click="$emit('upload')" :disabled="disableSyncButtons" secondary>
-        Export to Localazy
+        {{ activeProjectName ? `Export to ${activeProjectName}` : 'Export to Localazy' }}
       </v-button>
       <v-button @click="$emit('download')" :disabled="disableSyncButtons" secondary>
-        Import to Directus
+        {{ activeProjectName ? `Import from ${activeProjectName}` : 'Import to Directus' }}
       </v-button>
       <v-button @click="$emit('save-settings')" :disabled="!hasChanges" secondary>
         Save
@@ -29,6 +29,10 @@ const props = defineProps({
   disableSync: {
     type: Boolean,
     required: true,
+  },
+  activeProjectName: {
+    type: String,
+    default: undefined,
   },
 });
 

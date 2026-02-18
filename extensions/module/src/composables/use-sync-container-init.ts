@@ -11,7 +11,7 @@ export const useInitSyncContainer = () => {
   const enabledFields = ref<EnabledField[]>([]);
   const synchronizeTranslationStrings = ref(defaultConfiguration().content_transfer_setup.translation_strings);
   const {
-    settings, localazyData, contentTransferSetup, hydrateDirectusData,
+    settings, localazyData, contentTransferSetup, hydrateDirectusData, projectConfigs,
   } = useHydrate();
 
   hydrateDirectusData().then(() => {
@@ -29,6 +29,9 @@ export const useInitSyncContainer = () => {
         enabledFields.value = [];
       }
       configuration.value.content_transfer_setup = cloneDeep(contentTransferSetup.value);
+    }
+    if (projectConfigs.value) {
+      configuration.value.project_configs = cloneDeep(projectConfigs.value);
     }
   });
 

@@ -28,4 +28,5 @@ export const defaultConfiguration = (): Configuration => ({
     project_name: '',
     org_id: '',
   },
+  project_configs: [],
 });
