@@ -11,7 +11,7 @@
         <div class="flex items-center" v-else-if="isConnected">
           <div class="rounded-full bg-success w-4 h-4 mr-2" />
           <div class="text-foreground-normal font-normal">
-            {{ localazyProject?.name }}
+            {{ activeProject?.name }}
           </div>
         </div>
 
@@ -35,7 +35,7 @@
 
         <component
           :is="isConnected ? 'a' : 'span'"
-          :href="localazyProject?.url || undefined"
+          :href="activeProject?.url || undefined"
           target="_blank"
           class="open-link"
           title="Open Localazy project in a new tab."
@@ -65,7 +65,7 @@
         <span
           class="font-normal"
           :class="{ 'over-key-limit': exceededKeyLimit }">
-          {{ localazyProject?.organization.usedKeys }} / {{ localazyProject?.organization.availableKeys }}
+          {{ activeProject?.organization.usedKeys }} / {{ activeProject?.organization.availableKeys }}
         </span>
       </div>
     </div>
@@ -81,8 +81,6 @@ import { DirectusLocalazyAdapter } from '../../../../common/services/directus-lo
 import { Settings } from '../../../../common/models/collections-data/settings';
 import { LocalazyData } from '../../../../common/models/collections-data/localazy-data';
 
-const { hydrateLocalazyData } = useLocalazyStore();
-
 const props = defineProps({
   settings: {
     type: Object as PropType<Settings | null>,
@@ -92,17 +90,29 @@ const props = defineProps({
     type: Object as PropType<LocalazyData | null>,
     required: true,
   },
+  activeProjectId: {
+    type: String as PropType<string | undefined>,
+    default: undefined,
+  },
 });
 
+const localazyStore = useLocalazyStore();
 const {
-  hydrating, localazyProject, exceededKeyLimit,
-} = storeToRefs(useLocalazyStore());
+  hydrating, localazyProject, exceededKeyLimit, localazyProjectsMap,
+} = storeToRefs(localazyStore);
 
-const isConnected = computed(() => !hydrating.value && !!localazyProject.value);
+const activeProject = computed(() => {
+  if (props.activeProjectId) {
+    return localazyProjectsMap.value.get(props.activeProjectId) || localazyProject.value;
+  }
+  return localazyProject.value;
+});
+
+const isConnected = computed(() => !hydrating.value && !!activeProject.value);
 const hasLocalazyToken = computed(() => !!props.localazyData?.access_token);
 const isConnecting = computed(() => hydrating.value);
 const localazySourceLanguage = computed(() => getLocalazyLanguages()
-  .find((lang) => lang.localazyId === localazyProject.value?.sourceLanguage));
+  .find((lang) => lang.localazyId === activeProject.value?.sourceLanguage));
 const directusSourceLanguage = computed(() => {
   if (!props.settings?.source_language) return null;
   return findLocalazyLanguageByLocale(
@@ -112,7 +122,7 @@ const directusSourceLanguage = computed(() => {
 
 async function onReconnect() {
   if (hasLocalazyToken.value) {
-    await hydrateLocalazyData({ force: true, localazyData: props.localazyData });
+    await localazyStore.hydrateLocalazyData({ force: true, localazyData: props.localazyData });
   }
 }
 </script>

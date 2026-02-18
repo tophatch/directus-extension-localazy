@@ -19,6 +19,7 @@ export interface DirectusApi {
   fetchDirectusItems<T extends Item>(collection: string, query?: Query): Promise<T[]>;
   fetchDirectusSingletonItem<T extends Item>(collection: string, query?: Query): Promise<T>;
 
+  deleteDirectusItem(collection: string, itemId: number | string): Promise<void>;
   createField(collection: string, field: DeepPartial<Field>): Promise<void>;
 
   getCollection(collection: string): Pick<Collection, 'collection'> | null;

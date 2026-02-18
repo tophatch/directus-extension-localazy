@@ -186,6 +186,18 @@ export function useDirectusApi(): UseDirectusApi {
     loading.value = false;
   }
 
+  const deleteDirectusItem = async (collection: string, itemId: number | string) => {
+    loading.value = true;
+    try {
+      await api.delete(`/items/${collection}/${itemId}`);
+    } catch (e: any) {
+      addDirectusError(e);
+      throw e;
+    } finally {
+      loading.value = false;
+    }
+  };
+
   async function createField(collection: string, field: DeepPartial<Field>) {
     loading.value = true;
     try {
@@ -207,6 +219,7 @@ export function useDirectusApi(): UseDirectusApi {
     fetchTranslationStrings,
     updateSettings,
     upsertTranslationString,
+    deleteDirectusItem,
     createField,
     getCollection,
     loading,

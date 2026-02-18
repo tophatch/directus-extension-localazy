@@ -122,9 +122,20 @@ const props = defineProps({
     type: Object as PropType<Settings | null>,
     required: true,
   },
+  activeProjectId: {
+    type: String as PropType<string | undefined>,
+    default: undefined,
+  },
 });
 
-const { localazyProject } = storeToRefs(useLocalazyStore());
+const { localazyProject, localazyProjectsMap } = storeToRefs(useLocalazyStore());
+
+const activeProject = computed(() => {
+  if (props.activeProjectId) {
+    return localazyProjectsMap.value.get(props.activeProjectId) || localazyProject.value;
+  }
+  return localazyProject.value;
+});
 const { fetchDirectusLanguages } = useDirectusLanguages();
 
 const directusLanguages = ref<string[]>([]);
@@ -138,7 +149,7 @@ watch(() => props.settings, (s) => {
 }, { immediate: true, deep: true });
 
 const languageRows = computed((): Row[] => {
-  const localazyLanguages = (localazyProject.value?.languages || []);
+  const localazyLanguages = (activeProject.value?.languages || []);
   const localazyLocales = localazyLanguages.map((l) => l.code);
 
   // Initialize mapping service with custom mappings from settings
@@ -180,8 +191,8 @@ const languageRows = computed((): Row[] => {
     return arrVal.locale === othVal.locale;
   })
     .sort((a, b) => {
-      const isASourceLanguage = a.localazyId === localazyProject.value?.sourceLanguage;
-      const isBSourceLanguage = b.localazyId === localazyProject.value?.sourceLanguage;
+      const isASourceLanguage = a.localazyId === activeProject.value?.sourceLanguage;
+      const isBSourceLanguage = b.localazyId === activeProject.value?.sourceLanguage;
       if (isASourceLanguage && !isBSourceLanguage) {
         return -1;
       }

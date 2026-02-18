@@ -21,8 +21,15 @@
       <config-notice class="notice" :has-incomplete-configuration="hasIncompleteConfiguration" />
       <errors-notice class="notice" :localazy-data="localazyData" />
 
-      <connection-overview class="overview-block" :localazy-data="localazyData" :settings="settings" />
-      <connection-languages class="overview-block mt-8" :settings="settings" />
+      <project-tabs
+        v-if="projectConfigs.length > 1"
+        :project-configs="projectConfigs"
+        :active-project-id="activeProjectTab"
+        @update:active-project-id="activeProjectTab = $event"
+      />
+
+      <connection-overview class="overview-block" :localazy-data="localazyData" :settings="settings" :active-project-id="activeProjectTab" />
+      <connection-languages class="overview-block mt-8" :settings="settings" :active-project-id="activeProjectTab" />
 
     </div>
 
@@ -35,23 +42,30 @@
 
 <script lang="ts" setup>
 import { storeToRefs } from 'pinia';
+import { watch } from 'vue';
 import Navigation from './components/Navigation.vue';
 import { useLocalazyStore } from './stores/localazy-store';
 import ErrorsNotice from './components/ErrorsNotice.vue';
 import ConfigNotice from './components/ConfigNotice.vue';
 import ConnectionOverview from './components/Overview/ConnectionOverview.vue';
 import ConnectionLanguages from './components/Overview/ConnectionLanguages.vue';
+import ProjectTabs from './components/Sync/ProjectTabs.vue';
 import { useHydrate } from './composables/use-hydrate';
 
 const {
   hydrateDirectusData, localazyData, hasIncompleteConfiguration, settings, hydratedDirectusData,
+  projectConfigs,
 } = useHydrate();
 const localazyStore = useLocalazyStore();
-const { hydrated } = storeToRefs(localazyStore);
+const { hydrated, activeProjectTab } = storeToRefs(localazyStore);
 
-hydrateDirectusData().then(() => {
-  localazyStore.hydrateLocalazyData({ localazyData });
-});
+hydrateDirectusData();
+
+watch(hydratedDirectusData, (ready) => {
+  if (ready) {
+    localazyStore.hydrateLocalazyData({ localazyData, projectConfigs });
+  }
+}, { immediate: true });
 
 </script>
 

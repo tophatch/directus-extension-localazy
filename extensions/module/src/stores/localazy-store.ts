@@ -27,6 +27,9 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
   const localazyProjectsMap = ref<Map<string, Project>>(new Map());
   const directusFilesMap = ref<Map<string, File>>(new Map());
 
+  // UI state (persists across page navigations)
+  const activeProjectTab = ref<string | undefined>(undefined);
+
   const hydrating = ref(false);
   const hydrated = ref(false);
   const {
@@ -60,8 +63,8 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
   const allProjectConfigs = computed(() => projectConfigs.value);
 
   async function loadProjects(options: HydrateOptions) {
-    const token = localazyDataItem.value?.access_token;
-    if (!token) {
+    const globalToken = localazyDataItem.value?.access_token;
+    if (!globalToken) {
       localazyProject.value = null;
       localazyProjectsMap.value = new Map();
       resetLocalazyErrors();
@@ -71,7 +74,7 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
     if (localazyProject.value && !options.force) return;
 
     try {
-      const projects = await LocalazyApiThrottleService.listProjects(token, { organization: true, languages: true });
+      const projects = await LocalazyApiThrottleService.listProjects(globalToken, { organization: true, languages: true });
 
       // Build the map for configured projects
       const newMap = new Map<string, Project>();
@@ -81,6 +84,25 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
           newMap.set(config.project_id, matchedProject);
         }
       }
+
+      // For configs not found with the global token, try using the config's own access_token
+      for (const config of projectConfigs.value) {
+        if (!newMap.has(config.project_id) && config.access_token && config.access_token !== globalToken) {
+          try {
+            const configProjects = await LocalazyApiThrottleService.listProjects(
+              config.access_token,
+              { organization: true, languages: true },
+            );
+            const matchedProject = configProjects.find((p) => p.id === config.project_id);
+            if (matchedProject) {
+              newMap.set(config.project_id, matchedProject);
+            }
+          } catch {
+            // Project not accessible with this token - skip
+          }
+        }
+      }
+
       localazyProjectsMap.value = newMap;
 
       // Backward compat: set localazyProject to the default (or first) project
@@ -105,8 +127,8 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
   }
 
   async function loadFiles(options: HydrateOptions) {
-    const token = localazyDataItem.value?.access_token;
-    if (!token) {
+    const globalToken = localazyDataItem.value?.access_token;
+    if (!globalToken) {
       directusFile.value = null;
       directusFilesMap.value = new Map();
       resetLocalazyErrors();
@@ -119,6 +141,9 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
       const project = localazyProjectsMap.value.get(config.project_id);
       if (!project) continue;
       if (directusFilesMap.value.has(config.project_id) && !options.force) continue;
+
+      // Use config's own token if available, otherwise fall back to global token
+      const token = config.access_token || globalToken;
 
       try {
         const files = await LocalazyApiThrottleService.listFiles(token, {
@@ -145,7 +170,7 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
       // Legacy fallback using projectId from localazyProject
       if (!directusFile.value || options.force) {
         try {
-          const files = await LocalazyApiThrottleService.listFiles(token, {
+          const files = await LocalazyApiThrottleService.listFiles(globalToken, {
             project: projectId.value,
           });
           directusFile.value = files.find((file) => file.name === 'directus.json') || null;
@@ -193,5 +218,7 @@ export const useLocalazyStore = defineStore('localazyStore', () => {
     getProject,
     getFile,
     allProjectConfigs,
+    // UI state
+    activeProjectTab,
   };
 });

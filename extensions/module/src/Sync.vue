@@ -41,8 +41,6 @@
       />
 
       <sync-option-buttons
-        v-model:show-untranslatable-field="showUntranslatableField"
-        v-model:show-untranslatable-collections="showUntranslatableCollections"
         :all-translatable-fields-checked="allTranslatableFieldsChecked"
         :some-translatable-fields-checked="someTranslatableFieldsChecked"
         @select-all="selectAll"
@@ -53,14 +51,11 @@
 
         <div class="collection-list">
           <collection-item
-            v-for="col in filteredIteratedCollections"
+            v-for="col in filteredVisibleCollections"
             :key="col.collection"
             :collection="col"
             :translatable-collections="translatableCollections"
-            :collections="collections"
             :selections="enabledFields"
-            :showUntranslatableField="showUntranslatableField"
-            :show-untranslatable-collections="showUntranslatableCollections"
             :project-configs="projectConfigs"
             @update:selections="enabledFields = $event"
           />
@@ -68,7 +63,7 @@
 
         <translation-strings-content
           :class="{
-            'translation-strings-separator': filteredIteratedCollections.length > 0,
+            'translation-strings-separator': filteredVisibleCollections.length > 0,
           }"
           v-model:shouldSynchronize="synchronizeTranslationStrings"
         />
@@ -86,7 +81,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from 'vue';
+import { computed, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import Navigation from './components/Navigation.vue';
 import CollectionItem from './components/Sync/CollectionItem.vue';
@@ -104,16 +99,13 @@ import { useInitSyncContainer } from './composables/use-sync-container-init';
 import { useSyncContainerActions } from './composables/use-sync-container-actions';
 import { useHydrate } from './composables/use-hydrate';
 import { useLocalazyStore } from './stores/localazy-store';
+import { FieldsUtilsService } from '../../common/utilities/fields-utils-service';
 
 const {
-  translatableRootCollections, rootCollections, translatableCollections, collections,
+  visibleTranslatableCollections, translatableCollections,
 } = useCollectionsOrganizer();
 const { getTranslatableFields } = useGetFieldsForTranslationRelation();
 const { progressTracker } = storeToRefs(useProgressTrackerStore());
-
-const showUntranslatableField = ref(false);
-const showUntranslatableCollections = ref(false);
-const activeProjectTab = ref<string | undefined>(undefined);
 
 const { configuration, enabledFields, synchronizeTranslationStrings } = useInitSyncContainer();
 const {
@@ -124,6 +116,7 @@ const {
   synchronizeTranslationStrings,
 });
 const localazyStore = useLocalazyStore();
+const { activeProjectTab } = storeToRefs(localazyStore);
 
 const {
   hydrateDirectusData, localazyData, hasIncompleteConfiguration,
@@ -131,17 +124,21 @@ const {
   projectConfigs,
 } = useHydrate();
 
-hydrateDirectusData().then(() => {
-  localazyStore.hydrateLocalazyData({ localazyData, projectConfigs });
-});
+hydrateDirectusData();
 
-const iteratedCollections = computed(() => (showUntranslatableCollections.value
-  ? rootCollections.value
-  : translatableRootCollections.value));
+// Use watch instead of .then() to avoid race condition:
+// useInitSyncContainer also calls hydrateDirectusData(), so the second call
+// returns immediately and .then() would fire before data is loaded.
+watch(hydratedDirectusData, (ready) => {
+  if (ready) {
+    localazyStore.hydrateLocalazyData({ localazyData, projectConfigs });
+  }
+}, { immediate: true });
 
 // Filter collections by active project tab
-const filteredIteratedCollections = computed(() => {
-  if (!activeProjectTab.value) return iteratedCollections.value;
+const filteredVisibleCollections = computed(() => {
+  const base = visibleTranslatableCollections.value;
+  if (!activeProjectTab.value) return base;
 
   const defaultPid = localazyStore.defaultProjectId;
 
@@ -153,9 +150,9 @@ const filteredIteratedCollections = computed(() => {
   );
 
   // If no collections assigned to this project yet, show all (so user can assign)
-  if (assignedCollections.size === 0) return iteratedCollections.value;
+  if (assignedCollections.size === 0) return base;
 
-  return iteratedCollections.value.filter(
+  return base.filter(
     (col) => assignedCollections.has(col.collection),
   );
 });
@@ -166,19 +163,20 @@ const activeProjectName = computed(() => {
   return config?.project_name;
 });
 
-const allTranslatableFields = computed(() => translatableCollections
-  .value.map((c) => [
-    {
-      collection: c.collection,
-      fields: getTranslatableFields(c.collection).translatableFields.map((f) => f.field),
-    },
-  ]).flat());
+const allVisibleTranslatableFields = computed(() => visibleTranslatableCollections
+  .value.map((c) => ({
+    collection: c.collection,
+    fields: getTranslatableFields(c.collection).translatableFields
+      .filter(FieldsUtilsService.isTranslatableField)
+      .map((f) => f.field),
+  })));
 
 const someTranslatableFieldsChecked = computed(() => enabledFields.value.length > 0);
-const allTranslatableFieldsChecked = computed(() => enabledFields.value.length === allTranslatableFields.value.length);
+const allTranslatableFieldsChecked = computed(() => enabledFields.value.length === allVisibleTranslatableFields.value.length
+  && enabledFields.value.length > 0);
 
 function selectAll() {
-  enabledFields.value = allTranslatableFields.value;
+  enabledFields.value = allVisibleTranslatableFields.value;
   synchronizeTranslationStrings.value = true;
 }
 

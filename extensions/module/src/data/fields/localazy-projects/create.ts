@@ -64,4 +64,13 @@ export const createLocalazyProjectsFields = (): Array<DeepPartial<Field>> => [
       default_value: false,
     },
   },
+  {
+    field: 'access_token',
+    type: 'string',
+    meta: {
+      interface: 'input',
+      readonly: getConfig().APP_MODE === 'production',
+      hidden: getConfig().APP_MODE === 'production',
+    },
+  },
 ];

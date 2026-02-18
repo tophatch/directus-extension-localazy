@@ -1,4 +1,4 @@
-import { useStores } from '@directus/extensions-sdk';
+import { useStores, useApi } from '@directus/extensions-sdk';
 import { storeToRefs } from 'pinia';
 import { ref, computed } from 'vue';
 import {
@@ -461,10 +461,25 @@ export const useHydrate = () => {
         return !existingField;
       });
 
-      missingFields.forEach(async (field) => {
+      for (const field of missingFields) {
         await createField(collection, field);
         await sleep(100);
-      });
+      }
+
+      // Ensure id field has auto_increment (fixes collections created without it)
+      const idFieldDef = createLocalazyProjectsFields().find((f) => f.field === 'id');
+      const existingIdField = getFieldsForCollection(collection).find((f: Field) => f.field === 'id');
+      if (existingIdField && idFieldDef?.schema?.has_auto_increment && !existingIdField.schema?.has_auto_increment) {
+        try {
+          const directusApi = useApi();
+          await directusApi.patch(`/fields/${collection}/id`, {
+            schema: { has_auto_increment: true },
+          });
+          await sleep(100);
+        } catch (e: any) {
+          console.error('Localazy: Could not update id field auto_increment', e);
+        }
+      }
 
       if (missingFields.length > 0) {
         await hydrateFieldsStore();
@@ -474,12 +489,15 @@ export const useHydrate = () => {
 
     if (!localazyProjectsCollection.value) {
       try {
+        console.log('Localazy: Creating localazy_projects collection...');
         const result = await createProjectsCollection(
           defaultOptions.collections.localazyProjects,
           defaultOptions.collections.groupingFolder,
         );
         localazyProjectsCollection.value = result;
+        console.log('Localazy: localazy_projects collection created successfully');
       } catch (e: any) {
+        console.error('Localazy: Failed to create localazy_projects collection', e);
         addDirectusError(e);
       }
     } else {
@@ -513,6 +531,7 @@ export const useHydrate = () => {
           project_url: localazyDataItem.value.project_url || '',
           org_id: localazyDataItem.value.org_id || '',
           is_default: true,
+          access_token: localazyDataItem.value.access_token || '',
         });
         const items = await fetchDirectusItems<Item & LocalazyProjectConfig>(collectionName, { limit: -1 });
         projectConfigItems.value = items || [];

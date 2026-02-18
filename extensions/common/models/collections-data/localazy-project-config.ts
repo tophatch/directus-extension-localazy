@@ -5,4 +5,5 @@ export type LocalazyProjectConfig = {
   project_url: string;
   org_id: string;
   is_default: boolean;
+  access_token: string;
 };

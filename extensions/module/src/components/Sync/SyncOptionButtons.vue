@@ -9,48 +9,11 @@
       <span class="button-label" v-if="allTranslatableFieldsChecked">Deselect all</span>
       <span class="button-label" v-else>Select all</span>
     </v-checkbox>
-
-    <v-menu show-arrow>
-      <template #activator="{ toggle }">
-        <div
-          @click="toggle"
-          class="button">
-          <v-icon name="visibility" />
-          <span class="button-label">Options</span>
-        </div>
-      </template>
-
-      <v-list>
-        <v-list-item>
-          <v-checkbox v-model="localShowUntranslatableField">
-            Show untranslatable fields
-          </v-checkbox>
-        </v-list-item>
-      </v-list>
-
-      <v-list>
-        <v-list-item>
-          <v-checkbox v-model="localShowUntranslatableCollections">
-            Show collections without translatable fields
-          </v-checkbox>
-        </v-list-item>
-      </v-list>
-    </v-menu>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { computed } from 'vue';
-
 const props = defineProps({
-  showUntranslatableField: {
-    type: Boolean,
-    required: true,
-  },
-  showUntranslatableCollections: {
-    type: Boolean,
-    required: true,
-  },
   allTranslatableFieldsChecked: {
     type: Boolean,
     required: true,
@@ -61,17 +24,7 @@ const props = defineProps({
   },
 });
 
-const emits = defineEmits(['select-all', 'deselect-all', 'update:showUntranslatableField', 'update:showUntranslatableCollections']);
-
-const localShowUntranslatableField = computed({
-  get: () => props.showUntranslatableField,
-  set: (value: boolean) => emits('update:showUntranslatableField', value),
-});
-
-const localShowUntranslatableCollections = computed({
-  get: () => props.showUntranslatableCollections,
-  set: (value: boolean) => emits('update:showUntranslatableCollections', value),
-});
+const emits = defineEmits(['select-all', 'deselect-all']);
 
 function onUpdateCollectionSelection() {
   if (props.allTranslatableFieldsChecked) {
@@ -110,12 +63,6 @@ function onUpdateCollectionSelection() {
   & .button-label {
     color: var(--foreground-subdued);
     font-weight: 500;
-  }
-
-  & .button {
-    display: flex;
-    gap: 4px;
-    cursor: pointer;
   }
 }
 </style>

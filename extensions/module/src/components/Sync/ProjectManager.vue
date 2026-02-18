@@ -34,48 +34,36 @@
       </div>
     </div>
 
-    <div class="add-project" v-if="availableProjects.length > 0">
-      <v-menu show-arrow>
-        <template #activator="{ toggle }">
-          <v-button secondary x-small @click="toggle" :loading="loadingProjects">
-            <v-icon name="add" small />
-            Add Project
-          </v-button>
-        </template>
-        <v-list>
-          <v-list-item
-            v-for="project in availableProjects"
-            :key="project.id"
-            clickable
-            @click="addProject(project)"
-          >
-            {{ project.name }}
-          </v-list-item>
-        </v-list>
-      </v-menu>
+    <div class="add-project">
+      <v-button
+        secondary
+        x-small
+        @click="onAddProjectClick"
+        :loading="addingProject"
+      >
+        <v-icon name="add" small />
+        Add Project
+      </v-button>
     </div>
 
-    <v-button
-      v-if="configuredProjects.length === 0 && availableProjects.length === 0"
-      secondary
-      x-small
-      @click="refreshProjects"
-      :loading="loadingProjects"
-    >
-      Load Available Projects
-    </v-button>
+    <v-notice type="danger" class="error" v-if="addProjectError">
+      <div class="message">
+        There was an error while connecting to Localazy. Please try again.
+      </div>
+    </v-notice>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { computed, ref, onMounted, PropType } from 'vue';
+import { computed, ref, PropType } from 'vue';
 import { storeToRefs } from 'pinia';
-import { Project } from '@localazy/api-client';
+import { GenericConnectorClient, Services, getOAuthAuthorizationUrl } from '@localazy/generic-connector-client';
+import { useStores } from '@directus/extensions-sdk';
 import { useLocalazyStore } from '../../stores/localazy-store';
 import { useDirectusApi } from '../../composables/use-directus-api';
 import { LocalazyProjectConfig } from '../../../../common/models/collections-data/localazy-project-config';
-import { LocalazyApiThrottleService } from '../../../../common/services/localazy-api-throttle-service';
 import { LocalazyData } from '../../../../common/models/collections-data/localazy-data';
+import { getConfig } from '../../../../common/config/get-config';
 
 const props = defineProps({
   localazyData: {
@@ -92,32 +80,22 @@ const emit = defineEmits(['update:projectConfigs']);
 
 const localazyStore = useLocalazyStore();
 const { projectConfigs } = storeToRefs(localazyStore);
-const { createDirectusItem, updateDirectusItem, fetchDirectusItems } = useDirectusApi();
+const { createDirectusItem, updateDirectusItem, fetchDirectusItems, deleteDirectusItem } = useDirectusApi();
+const { useNotificationsStore } = useStores();
+const notificationsStore = useNotificationsStore();
 
-const allLocalazyProjects = ref<Project[]>([]);
-const loadingProjects = ref(false);
+const addingProject = ref(false);
+const addProjectError = ref(false);
 const saving = ref(false);
+
+const client = new GenericConnectorClient({
+  pluginId: Services.DIRECTUS,
+  genericConnectorUrl: getConfig().LOCALAZY_PLUGIN_CONNECTOR_API_URL,
+});
 
 const isLoggedIn = computed(() => !!props.localazyData?.access_token);
 
 const configuredProjects = computed(() => projectConfigs.value);
-
-const availableProjects = computed(() => allLocalazyProjects.value.filter(
-  (p) => !configuredProjects.value.some((c) => c.project_id === p.id),
-));
-
-async function refreshProjects() {
-  if (!props.localazyData?.access_token) return;
-  loadingProjects.value = true;
-  try {
-    allLocalazyProjects.value = await LocalazyApiThrottleService.listProjects(
-      props.localazyData.access_token,
-      { organization: true, languages: true },
-    );
-  } finally {
-    loadingProjects.value = false;
-  }
-}
 
 async function reloadConfigs() {
   const items = await fetchDirectusItems<LocalazyProjectConfig>(props.projectsCollectionName, { limit: -1 });
@@ -125,26 +103,62 @@ async function reloadConfigs() {
   emit('update:projectConfigs', projectConfigs.value);
 }
 
-async function addProject(project: Project) {
-  saving.value = true;
+async function onAddProjectClick() {
+  addProjectError.value = false;
+  addingProject.value = true;
   try {
-    const isFirst = configuredProjects.value.length === 0;
-    await createDirectusItem(props.projectsCollectionName, {
-      project_id: project.id,
-      project_name: project.name || '',
-      project_url: project.slug || '',
-      org_id: project.orgId || '',
-      is_default: isFirst,
+    const keys = await client.public.keys();
+    const url = getOAuthAuthorizationUrl({
+      clientId: getConfig().LOCALAZY_OAUTH_APP_CLIENT_ID,
+      customId: keys.writeKey,
+      allowCreate: true,
+      minimalRole: 'owner',
+    }, getConfig().LOCALAZY_OAUTH_URL);
+    window.open(url);
+
+    const pollResult = await client.oauth.continuousPoll({
+      readKey: keys.readKey,
     });
+    const pollResultData = pollResult.data;
+
+    const projectId = pollResultData.project?.id || '';
+    const accessToken = pollResultData.accessToken || '';
+
+    // Check if this project is already configured
+    if (configuredProjects.value.some((c) => c.project_id === projectId)) {
+      // Update the existing project's access token
+      const existing = configuredProjects.value.find((c) => c.project_id === projectId);
+      if (existing?.id) {
+        await updateDirectusItem(props.projectsCollectionName, existing.id, {
+          access_token: accessToken,
+          project_name: pollResultData.project?.name || existing.project_name,
+        });
+      }
+      notificationsStore.add({
+        title: `Token refreshed for ${pollResultData.project?.name || 'project'}`,
+      });
+    } else {
+      // Add new project
+      const isFirst = configuredProjects.value.length === 0;
+      await createDirectusItem(props.projectsCollectionName, {
+        project_id: projectId,
+        project_name: pollResultData.project?.name || '',
+        project_url: pollResultData.project?.url || '',
+        org_id: pollResultData.project?.orgId || '',
+        is_default: isFirst,
+        access_token: accessToken,
+      });
+      notificationsStore.add({
+        title: `Project "${pollResultData.project?.name || ''}" added`,
+      });
+    }
+
     await reloadConfigs();
-    // Re-hydrate store to load the new project's data
-    await localazyStore.hydrateLocalazyData({
-      localazyData: props.localazyData,
-      projectConfigs: projectConfigs.value,
-      force: true,
-    });
+  } catch (e: any) {
+    console.error('Localazy: Failed to add project via OAuth', e);
+    addProjectError.value = true;
   } finally {
-    saving.value = false;
+    addingProject.value = false;
   }
 }
 
@@ -171,25 +185,13 @@ async function removeProject(config: LocalazyProjectConfig) {
   saving.value = true;
   try {
     if (config.id) {
-      const api = useDirectusApi();
-      // Delete via direct API call since useDirectusApi doesn't have deleteItem
-      await api.fetchDirectusItems(props.projectsCollectionName, {
-        filter: { id: { _eq: config.id } },
-      });
-      // Actually we need to use the api to delete - let's do it via updateDirectusItem workaround
-      // Use the Directus REST API directly
+      await deleteDirectusItem(props.projectsCollectionName, config.id);
     }
     await reloadConfigs();
   } finally {
     saving.value = false;
   }
 }
-
-onMounted(() => {
-  if (isLoggedIn.value) {
-    refreshProjects();
-  }
-});
 </script>
 
 <style lang="scss" scoped>
@@ -231,5 +233,9 @@ onMounted(() => {
 
 .add-project {
   margin-top: 8px;
+}
+
+.error {
+  margin-top: 12px;
 }
 </style>

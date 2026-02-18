@@ -10,6 +10,7 @@ import { useImportFromLocalazy } from './use-import-from-localazy';
 import { useLocalazyStore } from '../stores/localazy-store';
 import { useDirectusApi } from './use-directus-api';
 import { useProgressTrackerStore } from '../stores/progress-tracker-store';
+import { useErrorsStore } from '../stores/errors-store';
 import { useDirectusLanguages } from './use-directus-languages';
 import { useCollectionsOrganizer } from './use-collections-organizer';
 import { useDirectusLocalazyAdapter } from './use-directus-localazy-adapter';
@@ -19,6 +20,7 @@ import { ContentTransferSetupDatabase, EnabledField } from '../../../common/mode
 import { Configuration } from '../models/configuration';
 import { AnalyticsService } from '../../../common/services/analytics-service';
 import { ExportToLocalazyCommonService } from '../../../common/services/export-to-localazy-common-service';
+import { M2ADiscoveryService } from '../../../common/services/m2a-discovery-service';
 
 type UseSyncContainerActions = {
   configuration: Ref<Configuration>;
@@ -47,17 +49,18 @@ type OnImportParams = {
 export const useSyncContainerActions = (data: UseSyncContainerActions) => {
   const { configuration, enabledFields, synchronizeTranslationStrings } = data;
 
-  const { upsertDirectusItem } = useDirectusApi();
+  const { upsertDirectusItem, fetchDirectusItems } = useDirectusApi();
   const { resolveExportLanguages, resolveImportLanguages } = useDirectusLanguages();
   const { fetchContentFromTranslatableCollections } = useTranslatableCollections();
   const { fetchTranslationStrings } = useTranslationStringsContent();
-  const { translatableCollections } = useCollectionsOrganizer();
+  const { translatableCollections, getFieldsForCollection, getRelationsForField } = useCollectionsOrganizer();
   const { upsertFromLocalazyContent } = useDirectusLocalazyAdapter();
 
   const { useNotificationsStore } = useStores();
   const notificationsStore = useNotificationsStore();
 
   const { addProgressMessage, resetProgressTracker } = useProgressTrackerStore();
+  const { resetLocalazyErrors } = useErrorsStore();
   const localazyStore = useLocalazyStore();
   const { localazyUser, localazyProject, defaultProjectId } = storeToRefs(localazyStore);
 
@@ -69,6 +72,38 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
     EnabledFieldsService.parseFromDatabase(configuration.value.content_transfer_setup.enabled_fields),
     enabledFields.value,
   ));
+
+  /**
+   * Discovers M2A child content for a set of enabled fields and merges them in.
+   * Returns augmented arrays of collections-for-fetch and enabled fields.
+   */
+  async function discoverM2AChildren(projectFields: EnabledField[]) {
+    const projectTranslatableCollections = EnabledFieldsService.buildTranslatableCollections(projectFields);
+    const discoveredChildren = [];
+
+    for (const tc of projectTranslatableCollections) {
+      const children = await M2ADiscoveryService.discoverAllChildContent(
+        tc.collection,
+        tc.itemIds,
+        getFieldsForCollection,
+        getRelationsForField,
+        fetchDirectusItems,
+      );
+      discoveredChildren.push(...children);
+    }
+
+    // Convert discovered children to EnabledField entries
+    const childEnabledFields: EnabledField[] = discoveredChildren.map((child) => ({
+      collection: child.collection,
+      fields: child.fields,
+      itemIds: child.itemIds,
+    }));
+
+    // Merge: original project fields + auto-discovered child fields
+    const mergedEnabledFields = [...projectFields, ...childEnabledFields];
+
+    return { mergedEnabledFields };
+  }
 
   async function onSaveSettings(payload: OnSaveSettingsParams) {
     const { contentTransferSetupCollection, contentTransferSetup, notify } = payload;
@@ -95,11 +130,11 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
   async function onExport(payload: OnExportParams) {
     loading.value = true;
     showProgress.value = true;
+    resetLocalazyErrors();
     addProgressMessage({
       id: ProgressTrackerId.PREPARING_IMPORT,
-      message: 'Preparing Directus data for import',
+      message: 'Preparing Directus data for export',
     });
-    const token = computed(() => configuration.value.localazy_data.access_token);
     onSaveSettings(payload);
 
     try {
@@ -119,7 +154,10 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
         || payload.targetProjectId === resolvedDefaultProjectId;
 
       for (const [pid, projectFields] of projectGroups) {
-        const projectTranslatableCollections = EnabledFieldsService.buildTranslatableCollections(projectFields);
+        // Discover M2A child content and merge into fields
+        const { mergedEnabledFields } = await discoverM2AChildren(projectFields);
+
+        const projectTranslatableCollections = EnabledFieldsService.buildTranslatableCollections(mergedEnabledFields);
 
         // Map to the format expected by fetchContentFromTranslatableCollections
         const collectionsForFetch = projectTranslatableCollections.map((tc) => {
@@ -138,10 +176,14 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
           fetchContentFromTranslatableCollections({
             languages: exportLanguages,
             translatableCollections: collectionsForFetch,
-            enabledFields: projectFields,
+            enabledFields: mergedEnabledFields,
             settings: configuration.value.settings,
           }),
         ]);
+
+        // Use per-project token if available, fall back to global token
+        const projectConfig = localazyStore.allProjectConfigs.find((c) => c.project_id === pid);
+        const token = computed(() => projectConfig?.access_token || configuration.value.localazy_data.access_token);
 
         await useExportToLocalazy(token).exportContentToLocalazy({
           content: merge(collectionsContent, translationStrings),
@@ -157,6 +199,7 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
   async function onImport(payload: OnImportParams) {
     showProgress.value = true;
     loading.value = true;
+    resetLocalazyErrors();
     addProgressMessage({
       id: ProgressTrackerId.RETRIEVING_LANGUAGES,
       message: 'Retrieving target languages',
@@ -172,10 +215,13 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
         const projectFields = enabledFields.value.filter(
           (f) => (f.projectId || resolvedDefaultProjectId) === payload.targetProjectId,
         );
+        // Discover M2A child content and merge into fields for import
+        const { mergedEnabledFields } = await discoverM2AChildren(projectFields);
+
         const result = await useImportFromLocalazy().importFromProject({
           projectId: payload.targetProjectId,
           languages: importLanguages,
-          enabledFields: projectFields,
+          enabledFields: mergedEnabledFields,
           localazyData: configuration.value.localazy_data,
         });
         if (result.success) {
@@ -190,10 +236,13 @@ export const useSyncContainerActions = (data: UseSyncContainerActions) => {
         const projectGroups = EnabledFieldsService.groupByProject(enabledFields.value, resolvedDefaultProjectId);
 
         for (const [pid, projectFields] of projectGroups) {
+          // Discover M2A child content and merge into fields for import
+          const { mergedEnabledFields } = await discoverM2AChildren(projectFields);
+
           const result = await useImportFromLocalazy().importFromProject({
             projectId: pid,
             languages: importLanguages,
-            enabledFields: projectFields,
+            enabledFields: mergedEnabledFields,
             localazyData: configuration.value.localazy_data,
           });
           if (result.success) {

@@ -58,7 +58,8 @@
 import {
   PropType, computed, ref, watch,
 } from 'vue';
-import { Item } from '@directus/types';
+import { Item, Field } from '@directus/types';
+import { useStores } from '@directus/extensions-sdk';
 import { useDirectusApi } from '../../composables/use-directus-api';
 
 const props = defineProps({
@@ -81,6 +82,10 @@ const items = ref<(Item & { displayValue?: string })[]>([]);
 const localSelectedIds = ref<string[]>([...props.selectedItemIds]);
 
 const { fetchDirectusItems } = useDirectusApi();
+const { useFieldsStore } = useStores();
+const { getFieldsForCollection } = useFieldsStore();
+
+const DISPLAY_FIELD_CANDIDATES = ['title', 'name', 'label', 'subject', 'heading'];
 
 const filteredItems = computed(() => {
   if (!searchQuery.value) return items.value;
@@ -94,14 +99,18 @@ const filteredItems = computed(() => {
 async function loadItems() {
   loadingItems.value = true;
   try {
+    const collectionFields = getFieldsForCollection(props.collection);
+    const existingFieldNames = collectionFields.map((f: Field) => f.field);
+    const displayFields = DISPLAY_FIELD_CANDIDATES.filter((f) => existingFieldNames.includes(f));
+
     const result = await fetchDirectusItems<Item>(props.collection, {
-      fields: ['id', 'title', 'name', 'label', 'subject', 'heading'],
+      fields: ['id', ...displayFields],
       limit: -1,
     });
-    items.value = result.map((item) => ({
-      ...item,
-      displayValue: item.title || item.name || item.label || item.subject || item.heading || '',
-    }));
+    items.value = result.map((item) => {
+      const displayValue = displayFields.reduce((val: string, field: string) => val || item[field] || '', '');
+      return { ...item, displayValue };
+    });
   } finally {
     loadingItems.value = false;
   }

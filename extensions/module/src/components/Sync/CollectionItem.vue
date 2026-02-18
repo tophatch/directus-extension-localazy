@@ -1,32 +1,12 @@
 <template>
-  <v-list-group
-    v-if="shouldRender"
-    :open="isExpanded"
-    :clickable="isExpandable"
-    @click="onGroupClick"
-    :arrowPlacement="false"
-    class="collection-group"
-  >
-
-    <template #activator>
-      <v-list-item-icon
-        v-if="isExpandable"
-        class="collection-group-chevron"
-        :class="{ active: isExpanded }"
-      >
-        <v-icon name="chevron_right" />
-      </v-list-item-icon>
-
+  <div class="collection-card" v-if="isTranslatableCollection">
+    <div class="collection-row">
       <v-checkbox
-        v-if="isTranslatableCollection"
-        class="collection-item collection-item-clickable"
-        :value="collection.collection"
-        :indeterminate="someTranslatableFieldsChecked && !allTranslatableFieldsChecked"
-        :model-value="selections.map((selection) => selection.collection)"
-        @update:model-value="onUpdateCollectionSelection"
+        :model-value="isEnabled"
+        @update:model-value="onToggleCollection"
       >
         <span class="collection-header">
-          <span>
+          <span class="collection-name-section">
             <v-icon
               :color="collection.color || 'var(--primary)'"
               class="collection-icon"
@@ -35,7 +15,7 @@
             <span class="collection-name">{{ collection.name }}</span>
           </span>
 
-          <span class="collection-controls" v-if="isTranslatableCollection && isSelected" @click.stop>
+          <span class="collection-controls" v-if="isEnabled" @click.stop>
             <v-select
               v-if="projectConfigs.length > 1"
               class="project-select"
@@ -53,68 +33,32 @@
           </span>
         </span>
       </v-checkbox>
-
-      <v-list-item
-        v-else
-        class="collection-item collection-item-unclickable v-list-item"
-      >
-        <span>
-          <v-icon
-            :color="collection.color || 'var(--primary)'"
-            class="collection-icon"
-            :name="collection.icon"
-          />
-          <span class="collection-name">{{ collection.name }}</span>
-        </span>
-      </v-list-item>
-    </template>
-
-    <v-checkbox
-      v-for="field in renderedFields"
-      :key="`${collection.collection}-${field.field}`"
-      class="field-item"
-      :disabled="!isTranlatableField(field)"
-      :value="`${collection.collection}-${field.field}`"
-      :model-value="localSelections"
-      :title="!isTranlatableField(field) ? `${field.type} is not translatable` : ''"
-      @update:model-value="localSelections = $event">
-      <span>{{ field.name }}</span>
-    </v-checkbox>
-
-    <div class="collection-group">
-      <collection-item
-        v-for="col in nestedCollections"
-        :key="col.collection"
-        :collection="col"
-        :collections="collections"
-        :translatable-collections="translatableCollections"
-        :selections="selections"
-        :show-untranslatable-field="showUntranslatableField"
-        :showUntranslatableCollections="showUntranslatableCollections"
-        :project-configs="projectConfigs"
-        @update:selections="$emit('update:selections', $event)"
-      />
     </div>
-  </v-list-group>
+    <div class="collection-summary" v-if="isEnabled">
+      <span class="summary-text">
+        {{ translatableFieldCount }} fields
+        <span v-if="m2aBlockTypeCount > 0">
+          &middot; {{ m2aBlockTypeCount }} block types auto-included
+        </span>
+      </span>
+    </div>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { PropType, computed, ref } from 'vue';
-import { AppCollection, Field } from '@directus/types';
-import { isEqualWith } from 'lodash';
+import { PropType, computed } from 'vue';
+import { AppCollection } from '@directus/types';
 import { useGetFieldsForTranslationRelation } from '../../composables/use-get-fields-for-translation-relation';
+import { useCollectionsOrganizer } from '../../composables/use-collections-organizer';
 import { EnabledField } from '../../../../common/models/collections-data/content-transfer-setup';
 import { LocalazyProjectConfig } from '../../../../common/models/collections-data/localazy-project-config';
 import { FieldsUtilsService } from '../../../../common/utilities/fields-utils-service';
+import { M2ADiscoveryService } from '../../../../common/services/m2a-discovery-service';
 import ItemFilterModal from './ItemFilterModal.vue';
 
 const props = defineProps({
   collection: {
     type: Object as PropType<AppCollection>,
-    required: true,
-  },
-  collections: {
-    type: Array as PropType<AppCollection[]>,
     required: true,
   },
   translatableCollections: {
@@ -125,14 +69,6 @@ const props = defineProps({
     type: Array as PropType<EnabledField[]>,
     required: true,
   },
-  showUntranslatableField: {
-    type: Boolean,
-    required: true,
-  },
-  showUntranslatableCollections: {
-    type: Boolean,
-    required: true,
-  },
   projectConfigs: {
     type: Array as PropType<LocalazyProjectConfig[]>,
     default: () => [],
@@ -141,51 +77,17 @@ const props = defineProps({
 
 const emits = defineEmits(['update:selections']);
 
-const localSelections = computed({
-  get() : string[] {
-    return props.selections.map((selection) => [
-      selection.collection,
-      ...selection.fields.map((field) => `${selection.collection}-${field}`),
-    ]).flat();
-  },
-  set(selections: string[]): void {
-    const collectionFieldsMap = selections
-      .reduce((acc, selection) => {
-        const [collection, field] = selection.split('-');
-        if (collection && field) {
-          if (!acc.has(collection)) {
-            acc.set(collection, []);
-          }
-          acc.get(collection)?.push(field);
-        }
-        return acc;
-      }, new Map<string, string[]>());
-    const updatedSelections = Object.entries(Object.fromEntries(collectionFieldsMap))
-      .map(([collection, fields]) => {
-        // Preserve projectId and itemIds from previous selection
-        const existing = props.selections.find((s) => s.collection === collection);
-        return {
-          collection,
-          fields,
-          ...(existing?.projectId ? { projectId: existing.projectId } : {}),
-          ...(existing?.itemIds ? { itemIds: existing.itemIds } : {}),
-        };
-      });
+const { getFieldsForCollection, getRelationsForField } = useCollectionsOrganizer();
 
-    emits('update:selections', updatedSelections);
-  },
-
-});
+const isTranslatableCollection = computed(() => props.translatableCollections
+  .some((col) => col.collection === props.collection.collection));
 
 const selectionsForCollection = computed(() => props.selections
   .find((selection) => selection.collection === props.collection.collection));
 const otherSelections = computed(() => props.selections
   .filter((selection) => selection.collection !== props.collection.collection));
 
-const isTranslatableCollection = computed(() => props.translatableCollections
-  .some((col) => col.collection === props.collection.collection));
-
-const isSelected = computed(() => !!selectionsForCollection.value);
+const isEnabled = computed(() => !!selectionsForCollection.value);
 
 const selectedProjectId = computed(() => selectionsForCollection.value?.projectId || '');
 const selectedItemIds = computed(() => selectionsForCollection.value?.itemIds || []);
@@ -198,50 +100,32 @@ const projectSelectItems = computed(() => [
   })),
 ]);
 
-const isTranlatableField = FieldsUtilsService.isTranslatableField;
+const { translatableFields } = useGetFieldsForTranslationRelation()
+  .getTranslatableFields(props.collection.collection);
 
-const nestedCollections = computed(() => props.collections.filter((collection) => collection.meta?.group === props.collection.collection));
-const collection = computed(() => props.collection);
+const translatableFieldNames = translatableFields
+  .filter(FieldsUtilsService.isTranslatableField)
+  .map((f) => f.field);
 
-const { translatableFields, allFields } = useGetFieldsForTranslationRelation().getTranslatableFields(collection.value.collection);
-const renderedFields = computed(() => (props.showUntranslatableField ? allFields : translatableFields));
-const isExpanded = ref(renderedFields.value.length === 0);
+const translatableFieldCount = translatableFieldNames.length;
 
-const shouldRender = computed(() => nestedCollections.value.length > 0
-|| (isTranslatableCollection.value || props.showUntranslatableCollections));
-const isExpandable = computed(() => nestedCollections.value.length > 0 || renderedFields.value.length > 0);
+const m2aBlockTypeCount = computed(() => M2ADiscoveryService.countM2ABlockTypes(
+  props.collection.collection,
+  getFieldsForCollection,
+  getRelationsForField,
+));
 
-const someTranslatableFieldsChecked = computed(() => {
-  const fields = translatableFields
-    .filter(isTranlatableField);
-  return (selectionsForCollection.value?.fields || [])
-    .some((field) => fields.some((f) => f.field === field));
-});
-
-const allTranslatableFieldsChecked = computed(() => {
-  const fields = translatableFields
-    .filter(isTranlatableField);
-
-  return fields.length > 0
-    && isEqualWith(
-      fields,
-      selectionsForCollection.value?.fields || [],
-      (translatedFields: Field[], selectionFields: string[]) => translatedFields.length === selectionFields.length
-        && translatedFields.every((translatableField) => selectionFields.includes(translatableField.field)),
-    );
-});
-
-function onUpdateCollectionSelection() {
-  const fields = translatableFields
-    .filter(isTranlatableField);
-  if (allTranslatableFieldsChecked.value) {
+function onToggleCollection() {
+  if (isEnabled.value) {
+    // Remove this collection
     emits('update:selections', otherSelections.value);
   } else {
+    // Add with ALL translatable fields
     emits('update:selections', [
       ...otherSelections.value,
       {
         collection: props.collection.collection,
-        fields: fields.map((field) => field.field),
+        fields: translatableFieldNames,
         ...(selectionsForCollection.value?.projectId ? { projectId: selectionsForCollection.value.projectId } : {}),
         ...(selectionsForCollection.value?.itemIds ? { itemIds: selectionsForCollection.value.itemIds } : {}),
       },
@@ -274,51 +158,27 @@ function onUpdateItemsForCollection(itemIds: string[]) {
   });
   emits('update:selections', updated);
 }
-
-function onGroupClick() {
-  isExpanded.value = !isExpanded.value;
-}
 </script>
 
 <style lang="scss" scoped>
+.collection-card {
+  padding: 4px 0;
+}
 
 .collection-icon {
   margin-right: 8px;
 }
 
-.collection-item-clickable {
-  font-weight: 500;
-  margin-top: 8px!important;
-  margin-bottom: 8px!important;
-}
+.collection-row {
+  :deep(.v-checkbox) {
+    font-weight: 500;
+  }
 
-.collection-item-unclickable {
-  font-weight: 400;
-  margin-bottom: 0px!important;
-}
-
-.field-item {
-  margin-left: 28px;
-  margin-bottom: 8px!important;
-}
-
-.collection-group {
-  display: block;
-}
-
-.collection-group-chevron {
- margin-right: 0 !important;
- color: var(--foreground-subdued);
- transform: rotate(0deg);
- transition: transform var(--medium) var(--transition);
-
- &:hover {
-  color: var(--foreground-normal);
- }
-
- &.active {
-  transform: rotate(90deg);
- }
+  :deep(.v-checkbox .label) {
+    width: 100%;
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .collection-header {
@@ -328,16 +188,58 @@ function onGroupClick() {
   width: 100%;
 }
 
+.collection-name-section {
+  display: flex;
+  align-items: center;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
 .collection-controls {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.collection-summary {
+  margin-left: 28px;
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
+.summary-text {
+  color: var(--foreground-subdued);
+  font-size: 12px;
 }
 
 .project-select {
-  min-width: 150px;
-  max-width: 200px;
+  min-width: 220px;
+  max-width: 350px;
+  flex-shrink: 0;
 }
+</style>
 
+<!-- Unscoped styles to penetrate Directus v-select component internals -->
+<style lang="scss">
+.collection-controls .project-select.v-select {
+  min-width: 220px;
+
+  .v-input {
+    min-width: 220px;
+
+    .input {
+      min-width: 200px;
+      width: auto;
+    }
+  }
+
+  .v-text-overflow {
+    max-width: none;
+    overflow: visible;
+    text-overflow: unset;
+    white-space: nowrap;
+  }
+}
 </style>
