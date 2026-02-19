@@ -15,7 +15,7 @@ export const useCollectionsOrganizer = () => {
 
   const collections = computed<AppCollection[]>(() => (
     sortBy(
-      allCollections?.value.filter((c: AppCollection) => c.meta),
+      allCollections?.value.filter((c: AppCollection) => c.meta && !c.meta.hidden),
       ['meta.sort', 'collection'],
     )
   ));

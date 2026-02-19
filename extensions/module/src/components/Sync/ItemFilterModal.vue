@@ -82,10 +82,26 @@ const items = ref<(Item & { displayValue?: string })[]>([]);
 const localSelectedIds = ref<string[]>([...props.selectedItemIds]);
 
 const { fetchDirectusItems } = useDirectusApi();
-const { useFieldsStore } = useStores();
+const { useFieldsStore, useCollectionsStore } = useStores();
 const { getFieldsForCollection } = useFieldsStore();
+const collectionsStore = useCollectionsStore();
 
 const DISPLAY_FIELD_CANDIDATES = ['title', 'name', 'label', 'subject', 'heading'];
+
+/** Extract field names from a Directus display template like "{{title}} - {{slug}}" */
+function parseTemplateFields(template: string): string[] {
+  const matches = template.match(/\{\{(\w+)\}\}/g);
+  if (!matches) return [];
+  return matches.map((m) => m.replace(/\{\{|\}\}/g, ''));
+}
+
+/** Render a display template by replacing {{field}} tokens with item values */
+function renderTemplate(template: string, item: Item): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, field) => {
+    const val = item[field];
+    return val != null ? String(val) : '';
+  });
+}
 
 const filteredItems = computed(() => {
   if (!searchQuery.value) return items.value;
@@ -99,16 +115,29 @@ const filteredItems = computed(() => {
 async function loadItems() {
   loadingItems.value = true;
   try {
+    const collectionInfo = collectionsStore.getCollection(props.collection);
+    const displayTemplate = collectionInfo?.meta?.display_template || '';
+    const templateFields = parseTemplateFields(displayTemplate);
+
     const collectionFields = getFieldsForCollection(props.collection);
     const existingFieldNames = collectionFields.map((f: Field) => f.field);
-    const displayFields = DISPLAY_FIELD_CANDIDATES.filter((f) => existingFieldNames.includes(f));
+
+    // Use template fields if available, otherwise fall back to candidates
+    const displayFields = templateFields.length > 0
+      ? templateFields.filter((f) => existingFieldNames.includes(f))
+      : DISPLAY_FIELD_CANDIDATES.filter((f) => existingFieldNames.includes(f));
 
     const result = await fetchDirectusItems<Item>(props.collection, {
       fields: ['id', ...displayFields],
       limit: -1,
     });
     items.value = result.map((item) => {
-      const displayValue = displayFields.reduce((val: string, field: string) => val || item[field] || '', '');
+      let displayValue = '';
+      if (templateFields.length > 0 && displayTemplate) {
+        displayValue = renderTemplate(displayTemplate, item).trim();
+      } else {
+        displayValue = displayFields.reduce((val: string, field: string) => val || item[field] || '', '');
+      }
       return { ...item, displayValue };
     });
   } finally {
